@@ -1,0 +1,129 @@
+Jairo Alberto Urrea Pito
+jurrea@gaticonsultores.com.co
+Conversion_3
+
+export HADOOP_USER_NAME=hdfs
+
+// Ver base de datos 
+mysql -u bootcamp -h 34.205.65.241 -p
+
+// Verificar si existe conexión con la base de datos
+sqoop list-tables --driver com.mysql.jdbc.Driver --connect jdbc:mysql://34.205.65.241:3306/ecommerce_cloudera --username bootcamp --password bootcamp
+
+// Realizar la ingesta de datos desde la base de datos a HDFS
+sqoop import --driver com.mysql.jdbc.Driver --connect jdbc:mysql://34.205.65.241:3306/ecommerce_cloudera --username bootcamp --password bootcamp --table product_transaction --split-by transaction_id --target-dir /user/desafio/product_transaction
+
+// Validar la ingesta exitosa en el directorio HDFS
+hdfs dfs -ls /user/desafio/product_transaction
+
+// Revisar uno de los archivos creados en la ingesta en el directorio HDFS
+hdfs dfs -cat /user/desafio/product_transaction/part-m-00000
+
+// Revisar la descarga del log en el directorio /Desafio/logs
+wget http://34.205.65.241/access.log
+
+
+// Crear carpeta en HDFS para los logs
+hdfs dfs -mkdir /user/desafio
+hdfs dfs -mkdir /user/desafio/logs
+hdfs dfs -ls /user/desafio
+
+// Realizar la ingesta del log en el directorio HDFS
+hdfs dfs -put /home/ec2-user/Desafio/logs/access.log /user/desafio/logs
+
+// Revisar la ingesta del log en el directorio HDFS
+hdfs dfs -ls /user/desafio/logs
+
+
+// Crear tabla en HIVE con SerDe
+hive
+
+CREATE EXTERNAL TABLE log_navegation(
+ip STRING,
+time_local STRING,
+method STRING,
+uri STRING,
+protocol STRING,
+status STRING,
+bytes_sent STRING,
+referer STRING,
+useragent STRING
+)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+ WITH SERDEPROPERTIES (
+ "input.regex" = '^(\\S+) \\S+ \\S+ \\[([^\\[]+)\\] "(\\w+) (\\S+) (\\S+)" (\\d+) (\\d+) "([^"]+)" "([^"]+)".*'
+ ) LOCATION '/user/desafio/logs';
+ 
+select * from log_navegation;
+
+// Revisar la ingesta en el directorio HDFS
+hive
+CREATE EXTERNAL TABLE product_transaction(
+transaction_id STRING,
+transaction_time TIMESTAMP,
+customer_ssn STRING,
+customer_name STRING,
+customer_email STRING,
+customer_adress STRING,
+customerstate STRING,
+customer_zipcode STRING,
+product_id STRING,
+product_cantity STRING
+)
+ROW FORMAT delimited fields TERMINATED BY ','
+STORED AS TEXTFILE LOCATION '/user/desafio/product_transaction/';
+
+select * from log_navegation;
+
+// Obtener el numero de ventas / visualizaciones por producto 
+
+SELECT t1.product_id, t2.ventas/t1.consultas as conversion
+FROM 
+    (select substring(uri,length(uri)-5) as product_id, count(*) as consultas from log_navegation
+    group by substring(uri,length(uri)-5)) t1
+JOIN
+    (select product_id, sum(product_cantity) as ventas from product_transaction
+    group by product_id) t2
+ON (t1.product_id = t2.product_id);
+
+// Crear tabla HIVE Conversion_3
+CREATE EXTERNAL TABLE conversion(
+sku STRING,
+conversion STRING);
+
+// Poblar tabla Conversion_3
+INSERT INTO conversion
+SELECT t1.product_id, t2.ventas/t1.consultas as conversion
+FROM 
+    (select substring(uri,length(uri)-5) as product_id, count(*) as consultas from log_navegation
+    group by substring(uri,length(uri)-5)) t1
+JOIN
+    (select product_id, sum(product_cantity) as ventas from product_transaction
+    group by product_id) t2
+ON (t1.product_id = t2.product_id);
+
+select count(*) from conversion_3;
+
+// Exportar la tabla conversion_3 desde HIVE a un archivo 
+INSERT OVERWRITE LOCAL DIRECTORY '/home/ec2-user/Desafio/'
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+LINES TERMINATED BY "\n"
+SELECT * FROM conversion_3;
+
+// Llevar archivo resultante a HDFS
+hdfs dfs -mkdir /user/desafio/conversion_3
+hdfs dfs -put /home/ec2-user/Desafio/* /user/desafio/conversion_3
+hdfs dfs -ls /user/desafio/conversion_3
+hdfs dfs -cat /user/desafio/conversion_3?/00000_0
+
+Alternativa 2:
+
+// Llevar archivo desde HIVE a MySQl conversion_3
+sqoop export --connect jdbc:mysql://34.205.65.241:3306/ecommerce_cloudera --username bootcamp --password bootcamp --table conversion_3 -m 10 --hcatalog-table conversion
+
+// Validar registros cargados con exito
+mysql -u bootcamp -h 34.205.65.241 -p
+select * from ecommerce_cloudera.conversion_3;
+
+EXITO !!! 
